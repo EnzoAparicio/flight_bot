@@ -4,14 +4,14 @@ import time
 import random
 from datetime import datetime, timedelta
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List
 import json
 import logging
 import os
 from bs4 import BeautifulSoup
 import smtplib
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
+from email.mime.text import MIMEText      # ✅ fix
+from email.mime.multipart import MIMEMultipart  # ✅ correcto
 
 # Configuración
 logging.basicConfig(level=logging.INFO)
@@ -194,12 +194,9 @@ class FlightBot:
 
     def scrape_simple_search(self, origin: str, destination: str, departure_date: str, return_date: str = None) -> List[FlightDeal]:
         """Búsqueda simple usando requests (sin Selenium)"""
-        # Esta función sería para APIs alternativas o scraping básico
-        # Por ahora retorna datos simulados para pruebas
         logger.info(f"Búsqueda alternativa para {origin}-{destination}")
         
-        # Simulación de datos para pruebas
-        if random.random() > 0.5:  # 50% probabilidad de encontrar ofertas
+        if random.random() > 0.5:
             mock_deal = FlightDeal(
                 origin=origin,
                 destination=destination,
@@ -246,7 +243,6 @@ class FlightBot:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Obtener ofertas recientes que no han sido notificadas
             cursor.execute('''
                 SELECT * FROM flight_deals 
                 WHERE notified = FALSE 
@@ -258,10 +254,9 @@ class FlightBot:
             alerts = []
             
             for deal_row in recent_deals:
-                # Por simplicidad, consideramos cualquier oferta bajo $400 como alerta
                 current_price = deal_row[5]
                 
-                if current_price < 400:  # Precio umbral
+                if current_price < 400:
                     deal = FlightDeal(
                         origin=deal_row[1],
                         destination=deal_row[2],
@@ -324,7 +319,7 @@ class FlightBot:
         if not self.email_user or not deals:
             return False
         
-        msg = MimeMultipart()
+        msg = MIMEMultipart()   # ✅ fix
         msg['From'] = self.email_user
         msg['To'] = ', '.join(self.recipient_emails)
         msg['Subject'] = f"🛫 {len(deals)} Nuevas Ofertas de Vuelos Detectadas"
@@ -341,7 +336,7 @@ Fuente: {deal.source}
 -------------------
 """
         
-        msg.attach(MimeText(body, 'plain'))
+        msg.attach(MIMEText(body, 'plain'))  # ✅ fix
         
         try:
             server = smtplib.SMTP('smtp.gmail.com', 587)
@@ -385,36 +380,29 @@ Fuente: {deal.source}
         for origin, destination in routes:
             logger.info(f"Buscando vuelos: {origin} → {destination}")
             
-            # Buscar para 3 fechas diferentes
             for days in [7, 14, 21]:
                 departure_date = (today + timedelta(days=days)).strftime('%Y-%m-%d')
                 return_date = (today + timedelta(days=days+7)).strftime('%Y-%m-%d')
                 
-                # Intentar con Amadeus primero
                 amadeus_deals = self.search_flights_amadeus(origin, destination, departure_date, return_date)
                 all_deals.extend(amadeus_deals)
                 
-                # Pausa entre búsquedas
                 time.sleep(2)
                 
-                # Si Amadeus no retorna resultados, usar método alternativo
                 if not amadeus_deals:
                     alt_deals = self.scrape_simple_search(origin, destination, departure_date, return_date)
                     all_deals.extend(alt_deals)
                     time.sleep(1)
         
-        # Procesar resultados
         if all_deals:
             logger.info(f"Total ofertas encontradas: {len(all_deals)}")
             self.save_deals(all_deals)
             
-            # Detectar alertas
             price_alerts = self.get_price_alerts()
             
             if price_alerts:
                 logger.info(f"¡{len(price_alerts)} alertas de precio detectadas!")
                 
-                # Enviar notificaciones
                 for alert in price_alerts:
                     self.send_telegram_notification(alert)
                     time.sleep(1)
@@ -430,11 +418,11 @@ Fuente: {deal.source}
 
 # Configuración de rutas
 ROUTES_TO_MONITOR = [
-    ('MAD', 'JFK'),  # Madrid - Nueva York
-    ('BCN', 'LHR'),  # Barcelona - Londres  
-    ('MEX', 'CDG'),  # México - París
-    ('EZE', 'FCO'),  # Buenos Aires - Roma
-    ('BOG', 'MIA'),  # Bogotá - Miami
+    ('MAD', 'JFK'),
+    ('BCN', 'LHR'),
+    ('MEX', 'CDG'),
+    ('EZE', 'FCO'),
+    ('BOG', 'MIA'),
 ]
 
 def main():
@@ -443,20 +431,16 @@ def main():
         logger.info("=== BOT DE OFERTAS DE VUELOS EN RAILWAY ===")
         
         bot = FlightBot()
-        
-        # Ejecutar búsqueda
         deals = bot.run_search(ROUTES_TO_MONITOR)
         
         logger.info(f"Proceso completado. Ofertas encontradas: {len(deals)}")
         
-        # Mostrar mejores ofertas
         if deals:
             best_deals = sorted(deals, key=lambda x: x.price)[:3]
             logger.info("=== TOP 3 MEJORES OFERTAS ===")
             for i, deal in enumerate(best_deals, 1):
                 logger.info(f"{i}. {deal.origin}→{deal.destination}: ${deal.price} ({deal.airline})")
         
-        # Mantener el proceso vivo por un tiempo
         logger.info("Bot ejecutándose... Esperando próxima ejecución")
         
     except Exception as e:
