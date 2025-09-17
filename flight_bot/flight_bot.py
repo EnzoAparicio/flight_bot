@@ -179,4 +179,13 @@ class FlightBot:
 # Configuración de rutas
 ROUTES_TO_MONITOR = [
     ('MVD', 'MAD'),  # Montevideo → Madrid
+    ('MVD', 'BCN'),  # Montevideo → Barcelona
+    ('MVD', 'CDG'),  # Montevideo → París
+    ('MVD', 'FCO'),  # Montevideo → Roma
+    ('MVD', 'LHR'),  # Montevideo → Londres
+    ('MVD', 'AMS'),  # Montevideo → Ámsterdam
+    ('MVD', 'JFK'),  # Montevideo → Nueva York
+    ('MVD', 'LAX'),  # Montevideo → Los Ángeles
+    ('MVD', 'SFO'),  # Montevideo → San Francisco
+    ('MVD', 'ORD'),  # Montevideo → Chicago
 ]
