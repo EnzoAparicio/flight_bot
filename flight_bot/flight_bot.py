@@ -6,10 +6,6 @@ from dataclasses import dataclass
 from typing import List
 import logging
 import os
-from bs4 import BeautifulSoup
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 # Configuración
 logging.basicConfig(level=logging.INFO)
@@ -29,9 +25,9 @@ class FlightDeal:
 
 
 def send_telegram_message(text: str):
-    """Envía un mensaje a Telegram usando el bot y el chat configurados"""
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "7960227385:AAGuslq7wseRDIlpC7SqYRsHEM8YR4fo7UY")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "5257227274")
+    """Envía un mensaje simple a Telegram"""
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         logger.error("Faltan TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID en variables de entorno")
         return
@@ -50,21 +46,20 @@ def send_telegram_message(text: str):
 
 class FlightBot:
     def __init__(self):
-        # Base de datos en Railway
         self.db_path = os.getenv('DATABASE_PATH', '/tmp/flight_deals.db')
         self.init_database()
         
-        # Variables de entorno para Railway
-        self.amadeus_api_key = os.getenv('AMADEUS_API_KEY', 'BZh3CGKHgfo0LdZF88AFyu31IRUb5g0s')
-        self.amadeus_api_secret = os.getenv('AMADEUS_API_SECRET', 'HVH0nIDXwV13BYm6')
+        # Credenciales de Amadeus
+        self.amadeus_api_key = os.getenv('AMADEUS_API_KEY')
+        self.amadeus_api_secret = os.getenv('AMADEUS_API_SECRET')
         self.amadeus_token = None
-        
-        # Telegram desde variables de entorno
-        self.telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '7960227385:AAGuslq7wseRDIlpC7SqYRsHEM8YR4fo7UY')
-        self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID', '5257227274')
+
+        # Configuración de búsqueda
+        self.scan_days = int(os.getenv("SCAN_DAYS", "730"))   # 2 años por defecto
+        self.step_days = int(os.getenv("STEP_DAYS", "7"))     # paso de 7 días
+        self.top_n = int(os.getenv("TOP_N", "5"))             # top 5 ofertas
 
     def init_database(self):
-        """Inicializa la base de datos SQLite"""
         try:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
@@ -90,7 +85,6 @@ class FlightBot:
             logger.error(f"Error inicializando base de datos: {e}")
 
     def get_amadeus_token(self):
-        """Obtiene token de acceso de Amadeus API"""
         if not self.amadeus_api_key or not self.amadeus_api_secret:
             logger.warning("Credenciales de Amadeus no configuradas")
             return None
@@ -102,7 +96,6 @@ class FlightBot:
             'client_id': self.amadeus_api_key,
             'client_secret': self.amadeus_api_secret
         }
-        
         try:
             response = requests.post(url, headers=headers, data=data, timeout=30)
             if response.status_code == 200:
@@ -113,16 +106,13 @@ class FlightBot:
                 logger.error(f"Error obteniendo token: {response.status_code} - {response.text}")
         except Exception as e:
             logger.error(f"Error obteniendo token de Amadeus: {e}")
-        
         return None
 
-    def search_flights_amadeus(self, origin: str, destination: str, departure_date: str, return_date: str = None) -> List[FlightDeal]:
-        """Busca vuelos usando Amadeus API"""
+    def search_flights_amadeus(self, origin: str, destination: str, departure_date: str) -> List[FlightDeal]:
+        """Busca vuelos en Amadeus para una fecha concreta"""
         if not self.amadeus_token:
             self.get_amadeus_token()
-        
         if not self.amadeus_token:
-            logger.warning("No se pudo obtener token de Amadeus")
             return []
         
         url = "https://test.api.amadeus.com/v2/shopping/flight-offers"
@@ -134,72 +124,69 @@ class FlightBot:
             'adults': 1,
             'max': 5
         }
-        if return_date:
-            params['returnDate'] = return_date
         
         try:
             response = requests.get(url, headers=headers, params=params, timeout=30)
             if response.status_code == 200:
                 data = response.json()
                 deals = []
-                for offer in data.get('data', [])[:5]:
+                for offer in data.get('data', []):
                     try:
                         price = float(offer['price']['total'])
                         itinerary = offer['itineraries'][0]
                         segment = itinerary['segments'][0]
                         airline = segment.get('carrierCode', 'Unknown')
 
-                        # 🔗 Generar link dinámico de Google Flights
+                        # Link a Google Flights
                         google_url = (
                             f"https://www.google.com/travel/flights?q=flights+from+{origin}+to+{destination}"
                             f"+on+{departure_date}"
                         )
 
-                        deal = FlightDeal(
+                        deals.append(FlightDeal(
                             origin=origin,
                             destination=destination,
                             departure_date=departure_date,
-                            return_date=return_date or "",
+                            return_date="",
                             price=price,
                             airline=airline,
                             source="Amadeus",
                             url=google_url,
                             found_at=datetime.now()
-                        )
-                        deals.append(deal)
+                        ))
                     except Exception as e:
                         logger.error(f"Error procesando oferta: {e}")
-                        continue
-                logger.info(f"Encontradas {len(deals)} ofertas en Amadeus para {origin}-{destination}")
                 return deals
             else:
                 logger.error(f"Error API Amadeus: {response.status_code} - {response.text}")
         except Exception as e:
             logger.error(f"Error buscando en Amadeus: {e}")
-        
         return []
 
     def run_search(self, routes: List[tuple]):
-        """Ejecuta búsqueda completa para las rutas especificadas"""
-        logger.info("=== INICIANDO BÚSQUEDA DE OFERTAS ===")
+        logger.info("=== INICIANDO ESCANEO DE OFERTAS ===")
+        today = datetime.now().date()
         all_deals = []
-        today = datetime.now()
-        
+
         for origin, destination in routes:
-            logger.info(f"Buscando vuelos: {origin} → {destination}")
-            for days in [7, 14, 21]:
-                departure_date = (today + timedelta(days=days)).strftime('%Y-%m-%d')
-                return_date = (today + timedelta(days=days+7)).strftime('%Y-%m-%d')
-                
-                amadeus_deals = self.search_flights_amadeus(origin, destination, departure_date, return_date)
-                all_deals.extend(amadeus_deals)
-                time.sleep(2)
-        
+            logger.info(f"Buscando {origin} → {destination}")
+            current = today
+            end_date = today + timedelta(days=self.scan_days)
+
+            while current <= end_date:
+                dep_date = current.strftime('%Y-%m-%d')
+                deals = self.search_flights_amadeus(origin, destination, dep_date)
+                if deals:
+                    all_deals.extend(deals)
+                current += timedelta(days=self.step_days)
+                time.sleep(1)  # evitar rate-limit
+
         if all_deals:
-            logger.info(f"Total ofertas encontradas: {len(all_deals)}")
-            for deal in all_deals:
+            # ordenar por precio
+            cheapest = sorted(all_deals, key=lambda d: d.price)[:self.top_n]
+            for deal in cheapest:
                 msg = (
-                    f"🛫 *Oferta detectada*\n"
+                    f"🛫 *Oferta barata*\n"
                     f"{deal.origin} → {deal.destination}\n"
                     f"💲 {deal.price}\n"
                     f"✈️ {deal.airline}\n"
@@ -209,15 +196,12 @@ class FlightBot:
                 send_telegram_message(msg)
         else:
             logger.info("No se encontraron ofertas")
-        
-        return all_deals
 
 
-# Configuración de rutas
+# Configuración de rutas (ahora fijo a Montevideo → Madrid)
 ROUTES_TO_MONITOR = [
-    ('MAD', 'JFK'),
-    ('BCN', 'LHR'),
-    ('MEX', 'CDG'),
-    ('EZE', 'FCO'),
-    ('BOG', 'MIA'),
+    ('MVD', 'MAD'),
+    ('MAD', 'MVD'),
+    ('MVD', 'BCN'),
+    ('BCN', 'MVD'),
 ]
