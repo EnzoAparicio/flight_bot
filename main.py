@@ -6,7 +6,7 @@ from flask import Flask, jsonify, render_template_string
 import logging
 
 # Importar tu bot
-from flight_bot import FlightBot, ROUTES_TO_MONITOR
+from flight_bot.flight_bot import FlightBot, ROUTES_TO_MONITOR
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
